@@ -4,102 +4,87 @@ import dlib
 import numpy as np
 import pandas as pd
 
-global j
-j = 0
-global totalx
-totalx = []
+global count
+count = 0
+global x_points, y_points, distances_list
+x_points, y_points, distances_list = [], [], []
 
-global totaly
-totaly = []
+landmark_predictor_path = 'shape_predictor_68_face_landmarks.dat_2'  # Ensure this file exists
+face_detector_model = dlib.get_frontal_face_detector()
+landmark_predictor_model = dlib.shape_predictor(landmark_predictor_path)
 
-global totald
-totald = []
+def convert_to_array(landmark_instance, dtype="int"):
+    coords_array = np.zeros((68, 2), dtype=dtype)
+    for idx in range(0, 68):
+        coords_array[idx] = (landmark_instance.part(idx).x, landmark_instance.part(idx).y)
+    return coords_array
 
-location = 'shape_predictor_68_face_landmarks.dat_2'
+def detect_landmarks(image_input):
+    global count
+    gray_image = cv2.cvtColor(image_input, cv2.COLOR_BGR2GRAY)
+    img_width, img_height = gray_image.shape
+    target_width = 230
+    target_height = int(img_height * (target_width / img_width))
+    scale_factor = (target_width / img_width)
+    resized_img = cv2.resize(gray_image, (target_height, target_width), interpolation=cv2.INTER_AREA)
 
-detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor(location)
-data = []
+    detected_faces = face_detector_model(resized_img)
+    if len(detected_faces) > 0:
+        for index, face in enumerate(detected_faces):
+            landmarks = landmark_predictor_model(resized_img, face)
+            
+            x_list, y_list, distance_data = [], [], []
+            for idx in range(0, 68):
+                x_list.append(float(landmarks.part(idx).x))
+                y_list.append(float(landmarks.part(idx).y))
+            
+            mean_x_val = np.mean(x_list)
+            mean_y_val = np.mean(y_list)
 
-def convertingTo_numpyarray(shape, dtype="int"):
-    coordinates = np.zeros((68, 2), dtype=dtype)
-    for i in range(0, 68):
-        coordinates[i] = (shape.part(i).x, shape.part(i).y)
-    return coordinates
+            x_points.append(x_list)
+            y_points.append(y_list)
 
-def get_landmarks(image):
-    global j
-    frame_grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    w, h = frame_grey.shape
-    width = 230
-    height = int(h * (width / w))
-    shrink = (width / w)
-    frame_resized = cv2.resize(frame_grey, (height, width), interpolation=cv2.INTER_AREA)
+            # Draw the center point
+            cv2.circle(image_input, (int(mean_x_val / scale_factor), int(mean_y_val / scale_factor)), 3, (0, 255, 0), -1)
 
-    dets = detector(frame_resized)
+            center_coordinates = np.asarray((mean_x_val, mean_y_val))
+            for x, y in zip(x_list, y_list):
+                coord = np.asarray((x, y))
+                dist = np.linalg.norm(coord - center_coordinates)
+                distance_data.append(float(dist))
 
-    if len(dets) > 0:
-        for k, d in enumerate(dets):
-            shape = predictor(frame_resized, d)
+            distances_list.append(distance_data)
 
-            listx = []
-            listy = []
-            distance = []
+            # Draw landmark points and connecting lines
+            for x, y in zip(x_list, y_list):
+                cv2.line(image_input, (int(x / scale_factor), int(y / scale_factor)), (int(mean_x_val / scale_factor), int(mean_y_val / scale_factor)), (0, 0, 255), 1)
 
-            for i in range(0, 68):
-                listx.append(float(shape.part(i).x))
-                listy.append(float(shape.part(i).y))
+            landmark_coordinates = convert_to_array(landmarks)
+            for (x, y) in landmark_coordinates:
+                cv2.circle(image_input, (int(x / scale_factor), int(y / scale_factor)), 2, (255, 255, 255), -1)
 
-            meanpx = np.mean(listx)
-            meanpy = np.mean(listy)
+            # Print coordinates
+            print("X coordinates of landmarks:", x_list)
+            print("Y coordinates of landmarks:", y_list)
 
-            totalx.append(listx)
-            totaly.append(listy)
+    if count == 4:
+        landmark_dataframe = pd.DataFrame(columns=['emotion', 'x', 'y', 'distance'])
+        for i in range(len(x_points)):
+            landmark_dataframe = landmark_dataframe.append({'emotion': 'happy', 'x': x_points[i]}, ignore_index=True)
+        landmark_dataframe.to_csv('Facial_Landmarks_Output.csv', encoding='utf-8', index=True)
 
-            # Draw center of landmarks
-            cv2.circle(image, (int(meanpx / shrink), int(meanpy / shrink)), 3, (0, 255, 0), -1)
+    count += 1
 
-            meannp = np.asarray((meanpx, meanpy))
-            for z, w in zip(listx, listy):
-                cord = np.asarray((z, w))
-                dist = np.linalg.norm(cord - meannp)
-                distance.append(float(dist))
-
-            totald.append(distance)
-
-            # Draw lines to face center
-            for h, m in zip(listx, listy):
-                cv2.line(image, (int(h / shrink), int(m / shrink)), (int(meanpx / shrink), int(meanpy / shrink)), (0, 0, 255), 1)
-
-            shape = convertingTo_numpyarray(shape)
-
-            # Draw landmark points
-            for (x, y) in shape:
-                cv2.circle(image, (int(x / shrink), int(y / shrink)), 2, (255, 255, 255), -1)
-
-    # Display the processed image
-    cv2.imshow("Face Landmarks", image)
-    cv2.waitKey(0)
+    # Show the processed image with facial landmarks
+    cv2.imshow("Processed Image with Facial Landmarks", image_input)
+    cv2.waitKey(0)  # Wait for a key press before closing the window
     cv2.destroyAllWindows()
 
-    print(listx)
+def execute_main():
+    image_paths = glob.glob("*.png")  # Ensure images are available in the directory
+    for image_path in image_paths:
+        img = cv2.imread(image_path)
+        detect_landmarks(img)
 
-    if j == 4:
-        print(totalx)
-        df = pd.DataFrame(columns='emotion x y d'.split())
-        for i in range(0, len(totalx)):
-            df = df.append({'emotion': 'a', 'x': totalx[i]}, ignore_index=True)
-            df.to_csv('Book1.csv', encoding='utf-8', index=True)
-
-    j += 1
-
-def main():
-    images = glob.glob("*.png")
-    count = 0
-
-    for image in images:
-        count += 1
-        img = cv2.imread(image)
-        get_landmarks(img)
-
-main()
+if __name__ == "__main__":
+    execute_main()
